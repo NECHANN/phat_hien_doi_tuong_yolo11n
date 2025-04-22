@@ -3,14 +3,14 @@
 import io
 from typing import Any
 
-
+import cv2
 
 from ultralytics import YOLO
 from ultralytics.utils import LOGGER
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.downloads import GITHUB_ASSETS_STEMS
 
-import cv2
+
 class Inference:
     """
     A class to perform object detection, image classification, image segmentation and pose estimation inference.
@@ -123,10 +123,86 @@ class Inference:
                     out.write(g.read())  # Read bytes into file
                 self.vid_file_name = "ultralytics.mp4"
         elif self.source == "webcam":
-            from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration, WebRtcMode
-            import av
             self.vid_file_name = 0  # Use webcam index 0
+            check_requirements("streamlit-webrtc>=0.45.0 av>=10.0.0")
+            from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+            import av
+            
+            class VideoProcessor(VideoProcessorBase):
+                def __init__(self, model, conf, iou, selected_ind, enable_trk, class_names):
+                    self.model = model
+                    self.conf = conf
+                    self.iou = iou
+                    self.selected_ind = selected_ind
+                    self.enable_trk = enable_trk
+                    self.class_names = class_names
+                    self.original_frame = None
+                    
+                def recv(self, frame):
+                    img = frame.to_ndarray(format="bgr24")
+                    self.original_frame = img.copy()
+                    
+                    # Process frame with model
+                    if self.enable_trk == "Yes":
+                        results = self.model.track(
+                            img, conf=self.conf, iou=self.iou, classes=self.selected_ind, persist=True
+                        )
+                    else:
+                        results = self.model(img, conf=self.conf, iou=self.iou, classes=self.selected_ind)
+                    
+                    # Annotate the frame with detection results
+                    annotated_frame = results[0].plot()
+                    
+                    return av.VideoFrame.from_ndarray(annotated_frame, format="bgr24")
+            
+            # Configure WebRTC
+            # Thay đổi phần cấu hình WebRTC trong phương thức inference()
+            rtc_configuration = RTCConfiguration({
+                    "iceServers": [
+                        {
+                            "urls": "stun:global.stun.twilio.com:3478"
+                        },
+                        {
+                            "urls": "turn:global.turn.twilio.com:3478?transport=udp",
+                            "username": "9d4853635b24303fed5bc727b3affd45b5a7e18723896e3a483a7079b4146317",
+                            "credential": "+R3jJHFzw+LQgnxIDWjq+nx89MD4CUCMy+oDWwo63qc="
+                        },
+                        {
+                            "urls": "turn:global.turn.twilio.com:3478?transport=tcp",
+                            "username": "9d4853635b24303fed5bc727b3affd45b5a7e18723896e3a483a7079b4146317",
+                            "credential": "+R3jJHFzw+LQgnxIDWjq+nx89MD4CUCMy+oDWwo63qc="
+                        },
+                        {
+                            "urls": "turn:global.turn.twilio.com:443?transport=tcp",
+                            "username": "9d4853635b24303fed5bc727b3affd45b5a7e18723896e3a483a7079b4146317",
+                            "credential": "+R3jJHFzw+LQgnxIDWjq+nx89MD4CUCMy+oDWwo63qc="
+                        }
+                    ]
+                }
+            )
+            
+            # Start WebRTC streamer
+            webrtc_ctx = webrtc_streamer(
+                key="ultralytics-detection",
+                video_processor_factory=lambda: VideoProcessor(
+                    self.model, self.conf, self.iou, self.selected_ind, self.enable_trk, class_names
+                ),
+                rtc_configuration=rtc_configuration,
+                media_stream_constraints={"video": True, "audio": False},
+                async_processing=True,
+            )
+            
+            # Information about WebRTC
+            self.st.info("""
+            ** Lưu ý về Webcam:**
+            - Thông qua WebRTC, ứng dụng sẽ cần quyền truy cập vào webcam của bạn
+            - Xử lý video được thực hiện trong trình duyệt của bạn
+            - Hãy chắc chắn bạn đã cấp quyền truy cập webcam khi được hỏi
+            """)
 
+
+
+    
     def configure(self):
         """Configure the model and load selected classes for inference."""
         # Add dropdown menu for model selection
@@ -196,3 +272,4 @@ if __name__ == "__main__":
     model = sys.argv[1] if args > 1 else None  # Assign first argument as the model name if provided
     # Create an instance of the Inference class and run inference
     Inference(model=model).inference()
+    
